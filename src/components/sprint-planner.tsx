@@ -7,6 +7,7 @@ import {
   getDay,
   format,
   isValid,
+  addDays,
 } from "date-fns";
 import {
   Card,
@@ -26,19 +27,16 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-  TableCaption
 } from "@/components/ui/table";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Calendar as CalendarIcon, PlusCircle, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AnimatedNumber } from "./animated-number";
-import { useToast } from "@/hooks/use-toast";
 
 type Resource = {
   id: string;
   name: string;
-  holidays: number;
   leaves: number;
 };
 
@@ -47,11 +45,13 @@ function DatePicker({
   setDate,
   placeholder,
   disabled,
+  disabledDays,
 }: {
   date?: Date;
   setDate: (date?: Date) => void;
   placeholder: string;
   disabled?: boolean;
+  disabledDays?: (date: Date) => boolean;
 }) {
   return (
     <Popover>
@@ -73,6 +73,7 @@ function DatePicker({
           mode="single"
           selected={date}
           onSelect={setDate}
+          disabled={disabledDays}
           initialFocus
         />
       </PopoverContent>
@@ -81,27 +82,24 @@ function DatePicker({
 }
 
 export function SprintPlanner() {
-  const { toast } = useToast();
   const [startDate, setStartDate] = useState<Date | undefined>();
   const [endDate, setEndDate] = useState<Date | undefined>();
   const [publicHolidays, setPublicHolidays] = useState<number>(0);
   const [resources, setResources] = useState<Resource[]>([
-    { id: crypto.randomUUID(), name: "Developer 1", holidays: 0, leaves: 2 },
-    { id: crypto.randomUUID(), name: "Developer 2", holidays: 0, leaves: 0 },
-    { id: crypto.randomUUID(), name: "QA Engineer", holidays: 1, leaves: 0 },
+    { id: crypto.randomUUID(), name: "Developer 1", leaves: 2 },
+    { id: crypto.randomUUID(), name: "Developer 2", leaves: 0 },
+    { id: crypto.randomUUID(), name: "QA Engineer", leaves: 1 },
   ]);
-  const [storyPointsPerDay, setStoryPointsPerDay] = useState<number>(8);
+  const [storyPointsPerSprint] = useState<number>(8);
 
   useEffect(() => {
-    if (startDate && endDate && startDate > endDate) {
-        toast({
-            variant: "destructive",
-            title: "Invalid Date Range",
-            description: "Sprint start date cannot be after the end date.",
-        });
-        setEndDate(undefined);
+    if (startDate) {
+      const newEndDate = addDays(startDate, 20);
+      setEndDate(newEndDate);
+    } else {
+      setEndDate(undefined);
     }
-  }, [startDate, endDate, toast]);
+  }, [startDate]);
 
   const { totalCalendarDays, totalWeekendDays, baseWorkingDays } = useMemo(() => {
     if (!startDate || !endDate || !isValid(startDate) || !isValid(endDate)) {
@@ -128,7 +126,7 @@ export function SprintPlanner() {
   const handleAddResource = useCallback(() => {
     setResources((prev) => [
       ...prev,
-      { id: crypto.randomUUID(), name: `Resource ${prev.length + 1}`, holidays: 0, leaves: 0 },
+      { id: crypto.randomUUID(), name: `Resource ${prev.length + 1}`, leaves: 0 },
     ]);
   }, []);
 
@@ -137,7 +135,7 @@ export function SprintPlanner() {
   }, []);
 
   const handleUpdateResource = useCallback(
-    (id: string, field: keyof Resource, value: string | number) => {
+    (id: string, field: keyof Omit<Resource, 'id'>, value: string | number) => {
       setResources((prev) =>
         prev.map((res) => {
           if (res.id === id) {
@@ -152,12 +150,16 @@ export function SprintPlanner() {
   );
 
   const totalStoryPoints = useMemo(() => {
+    const totalWorkingDaysInSprint = Math.max(0, 15 - publicHolidays); // 3 weeks * 5 weekdays/week = 15
+    if (totalWorkingDaysInSprint <= 0) return 0;
+
     return resources.reduce((total, resource) => {
-      const effectiveWorkingDays = Math.max(0, baseWorkingDays - resource.holidays - resource.leaves);
-      const contribution = effectiveWorkingDays * storyPointsPerDay;
+      const availableDays = Math.max(0, totalWorkingDaysInSprint - resource.leaves);
+      const percentageOfSprintAvailable = availableDays / totalWorkingDaysInSprint;
+      const contribution = percentageOfSprintAvailable * storyPointsPerSprint;
       return total + contribution;
     }, 0);
-  }, [resources, baseWorkingDays, storyPointsPerDay]);
+  }, [resources, publicHolidays, storyPointsPerSprint]);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
@@ -166,7 +168,7 @@ export function SprintPlanner() {
           <CardHeader>
             <CardTitle className="font-headline text-2xl text-primary">1. Sprint Details</CardTitle>
             <CardDescription>
-              Enter your sprint timeline and general holidays.
+              Select a sprint start date (must be a Wednesday). The sprint will be 3 weeks long.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -176,16 +178,17 @@ export function SprintPlanner() {
                 <DatePicker
                   date={startDate}
                   setDate={setStartDate}
-                  placeholder="Select start date"
+                  placeholder="Select a Wednesday"
+                  disabledDays={(date) => getDay(date) !== 3}
                 />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="end-date">Sprint End Date</Label>
-                <DatePicker
-                  date={endDate}
-                  setDate={setEndDate}
-                  placeholder="Select end date"
-                  disabled={!startDate}
+                <Input
+                  id="end-date"
+                  value={endDate ? format(endDate, "PPP") : "Automatically calculated"}
+                  readOnly
+                  className="bg-muted/50"
                 />
               </div>
               <div className="space-y-2">
@@ -229,22 +232,14 @@ export function SprintPlanner() {
             <CardHeader>
                 <CardTitle className="font-headline text-2xl text-primary">2. Resource Details</CardTitle>
                 <CardDescription>
-                    Add team members and their time off. Story points are calculated at
-                    <Input 
-                        type="number" 
-                        value={storyPointsPerDay} 
-                        onChange={e => setStoryPointsPerDay(Number(e.target.value) || 0)} 
-                        className="inline-block w-16 mx-1 h-8 text-center"
-                    /> 
-                    points per day.
+                    Add team members and their planned time off. Each resource can deliver a maximum of {storyPointsPerSprint} story points per sprint.
                 </CardDescription>
             </CardHeader>
             <CardContent>
                 <Table>
                     <TableHeader>
                         <TableRow>
-                            <TableHead className="w-[200px]">Resource Name</TableHead>
-                            <TableHead>Holidays</TableHead>
+                            <TableHead className="w-[250px]">Resource Name</TableHead>
                             <TableHead>Planned Leave</TableHead>
                             <TableHead>Effective Days</TableHead>
                             <TableHead className="text-right">Story Points</TableHead>
@@ -253,26 +248,26 @@ export function SprintPlanner() {
                     </TableHeader>
                     <TableBody>
                     {resources.map((resource) => {
-                        const effectiveWorkingDays = Math.max(0, baseWorkingDays - resource.holidays - resource.leaves);
-                        const storyPointContribution = effectiveWorkingDays * storyPointsPerDay;
+                        const totalWorkingDaysInSprint = Math.max(0, 15 - publicHolidays);
+                        const effectiveWorkingDays = Math.max(0, totalWorkingDaysInSprint - resource.leaves);
+                        const percentageOfSprintAvailable = totalWorkingDaysInSprint > 0 ? effectiveWorkingDays / totalWorkingDaysInSprint : 0;
+                        const storyPointContribution = percentageOfSprintAvailable * storyPointsPerSprint;
+
                         return (
                             <TableRow key={resource.id}>
                                 <TableCell>
                                     <Input value={resource.name} onChange={e => handleUpdateResource(resource.id, 'name', e.target.value)} placeholder="Resource name" />
                                 </TableCell>
                                 <TableCell>
-                                    <Input type="number" min="0" value={resource.holidays} onChange={e => handleUpdateResource(resource.id, 'holidays', e.target.value)} />
-                                </TableCell>
-                                <TableCell>
                                     <Input type="number" min="0" value={resource.leaves} onChange={e => handleUpdateResource(resource.id, 'leaves', e.target.value)} />
                                 </TableCell>
                                 <TableCell className="text-center">
                                     <p className="font-bold text-lg text-primary"><AnimatedNumber value={effectiveWorkingDays}/></p>
-                                    <p className="text-xs text-muted-foreground font-code">({baseWorkingDays} - {resource.holidays} - {resource.leaves})</p>
+                                    <p className="text-xs text-muted-foreground font-code">({totalWorkingDaysInSprint} - {resource.leaves})</p>
                                 </TableCell>
                                 <TableCell className="text-right">
                                     <p className="font-bold text-lg text-primary"><AnimatedNumber value={storyPointContribution}/></p>
-                                    <p className="text-xs text-muted-foreground font-code">({effectiveWorkingDays} * {storyPointsPerDay})</p>
+                                    <p className="text-xs text-muted-foreground font-code">({(percentageOfSprintAvailable * 100).toFixed(0)}% of {storyPointsPerSprint})</p>
                                 </TableCell>
                                 <TableCell>
                                     <Button variant="ghost" size="icon" onClick={() => handleRemoveResource(resource.id)}>
