@@ -10,7 +10,7 @@ import {
   isValid,
   addDays,
 } from "date-fns";
-import jsPDF from "jspdf";
+import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import {
   Card,
