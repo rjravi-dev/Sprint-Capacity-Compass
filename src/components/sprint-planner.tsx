@@ -1,6 +1,7 @@
+
 "use client";
 
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import {
   differenceInCalendarDays,
   eachDayOfInterval,
@@ -9,6 +10,8 @@ import {
   isValid,
   addDays,
 } from "date-fns";
+import jsPDF from "jspdf";
+import html2canvas from "html2canvas";
 import {
   Card,
   CardContent,
@@ -37,12 +40,14 @@ import {
 } from "@/components/ui/table";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { Calendar as CalendarIcon, PlusCircle, Trash2, Bot, CircleCheck, AlertTriangle } from "lucide-react";
+import { Calendar as CalendarIcon, PlusCircle, Trash2, Bot, CircleCheck, AlertTriangle, FileDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AnimatedNumber } from "./animated-number";
 import { analyzeSprint } from "@/ai/flows/sprint-risk-flow";
 import { type SprintAnalysisInput, type SprintAnalysisOutput } from "@/ai/schemas/sprint-analysis";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ReportDocument } from "./report-document";
+
 
 type Resource = {
   id: string;
@@ -105,6 +110,8 @@ export function SprintPlanner() {
   const [isReportOpen, setIsReportOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<SprintAnalysisOutput | null>(null);
+
+  const reportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (startDate) {
@@ -174,6 +181,27 @@ export function SprintPlanner() {
       return total + contribution;
     }, 0);
   }, [resources, publicHolidays, storyPointsPerSprint]);
+
+  const downloadPdf = async () => {
+    const reportElement = reportRef.current;
+    if (!reportElement) return;
+
+    const canvas = await html2canvas(reportElement, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: null,
+    });
+    
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF({
+        orientation: 'p',
+        unit: 'px',
+        format: [canvas.width, canvas.height],
+    });
+
+    pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+    pdf.save(`sprint-analysis-report-${format(new Date(), 'yyyy-MM-dd')}.pdf`);
+  };
 
   const handleGenerateReport = async () => {
     if (!startDate || !endDate) return;
@@ -394,10 +422,25 @@ export function SprintPlanner() {
                         {analysisResult.bestPractices.map((practice, index) => <li key={index}>{practice}</li>)}
                     </ul>
                 </div>
+                 <div className="flex justify-end pt-4">
+                    <Button onClick={downloadPdf}>
+                        <FileDown className="mr-2" /> Download PDF
+                    </Button>
+                 </div>
             </div>
           )}
         </DialogContent>
       </Dialog>
+      
+      {analysisResult && (
+        <div className="absolute -z-50 -left-[9999px] top-0">
+            <ReportDocument 
+                ref={reportRef}
+                sprintData={{startDate, endDate, publicHolidays, resources, totalStoryPoints, storyPointsPerSprint}}
+                analysisResult={analysisResult} 
+            />
+        </div>
+      )}
     </div>
   );
 }
